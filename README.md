@@ -112,6 +112,11 @@ Yes! Playit.gg is free for personal use.
 - 📖 [Documentation](https://playit.gg/docs)
 - 💬 [Discord Community](https://discord.gg/playit)
 
+## ❤️ Credits
+
+- **[Playit.gg Team](https://playit.gg)** - For the original plugin and the amazing tunneling platform.
+- **[itasli](https://github.com/itasli)** - For the "Revamped" v2.0 overhaul and maintenance.
+
 ---
 
 <p align="center">
