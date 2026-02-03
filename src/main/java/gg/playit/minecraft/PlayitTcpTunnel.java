@@ -1,5 +1,6 @@
 package gg.playit.minecraft;
 
+import gg.playit.minecraft.logger.MessageManager;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -10,11 +11,8 @@ import io.netty.handler.timeout.ReadTimeoutHandler;
 import org.bukkit.Server;
 
 import java.net.InetSocketAddress;
-import java.util.logging.Logger;
 
 public class PlayitTcpTunnel {
-    static Logger log = Logger.getLogger(PlayitTcpTunnel.class.getName());
-
     private final InetSocketAddress trueIp;
     private final EventLoopGroup group;
     private final String connectionKey;
@@ -52,6 +50,8 @@ public class PlayitTcpTunnel {
     private Channel tunnelChannel;
 
     public void start() {
+        MessageManager msg = MessageManager.get();
+        
         Bootstrap clientBootstrap = new Bootstrap();
         clientBootstrap.group(group);
         clientBootstrap.channel(NioSocketChannel.class);
@@ -64,21 +64,19 @@ public class PlayitTcpTunnel {
             }
         });
 
-        log.info("start connection to " + tunnelClaimAddress + " to claim client");
+        msg.debug("Connecting to tunnel claim: " + tunnelClaimAddress);
         clientBootstrap.connect().addListener((ChannelFutureListener) future -> {
             if (!future.isSuccess()) {
-                log.warning("failed to establish connection to tunnel claim" + tunnelClaimAddress);
+                msg.debug("Failed to connect to tunnel claim");
                 disconnected();
                 return;
             }
 
-            log.info("connected to tunnel server, sending claim token");
+            msg.debug("Sending claim token");
 
             future.channel().writeAndFlush(Unpooled.wrappedBuffer(tunnelClaimToken)).addListener(f -> {
                 if (!f.isSuccess()) {
-                    log.warning("failed to send claim token");
-                } else {
-                    log.info("claim token sent");
+                    msg.debug("Failed to send claim token");
                 }
             });
         });
@@ -98,6 +96,8 @@ public class PlayitTcpTunnel {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, ByteBuf byteBuf) throws Exception {
+            MessageManager msg = MessageManager.get();
+            
             if (confirmBytesRemaining > 0) {
                 if (byteBuf.readableBytes() < confirmBytesRemaining) {
                     confirmBytesRemaining -= byteBuf.readableBytes();
@@ -110,10 +110,10 @@ public class PlayitTcpTunnel {
                 byteBuf.readBytes(confirmBytesRemaining);
                 confirmBytesRemaining = 0;
 
-                log.info("connection to tunnel server has been established");
+                msg.debug("Tunnel connection established");
 
                 if (addChannelToMinecraftServer()) {
-                    log.info("added channel to minecraft server");
+                    msg.debug("Using direct channel injection");
                     return;
                 }
 
@@ -130,16 +130,16 @@ public class PlayitTcpTunnel {
                     }
                 });
 
-                log.info("connecting to minecraft server at " + minecraftServerAddress);
+                msg.debug("Connecting to local MC server");
                 minecraftClient.connect().addListener((ChannelFutureListener) future -> {
                     if (!future.isSuccess()) {
-                        log.warning("failed to connect to local minecraft server");
+                        msg.debug("Failed to connect to local MC server");
                         ctx.disconnect();
                         disconnected();
                         return;
                     }
 
-                    log.info("connected to local minecraft server");
+                    msg.debug("Connected to local MC server");
 
                     if (byteBuf.readableBytes() == 0) {
                         byteBuf.release();
@@ -147,7 +147,7 @@ public class PlayitTcpTunnel {
                     } else {
                         future.channel().writeAndFlush(byteBuf).addListener(f -> {
                             if (!f.isSuccess()) {
-                                log.warning("failed to send data to minecraft server");
+                                msg.debug("Failed to forward data to MC server");
                                 future.channel().disconnect();
                                 ctx.disconnect();
                                 disconnected();
@@ -165,7 +165,7 @@ public class PlayitTcpTunnel {
             /* proxy data */
             minecraftChannel.writeAndFlush(byteBuf).addListener(f -> {
                 if (!f.isSuccess()) {
-                    log.warning("failed to send data to minecraft server");
+                    msg.debug("Data forwarding failed");
                     minecraftChannel.disconnect();
                     tunnelChannel.disconnect();
                     disconnected();
@@ -177,48 +177,48 @@ public class PlayitTcpTunnel {
         }
 
         private boolean addChannelToMinecraftServer() {
+            MessageManager msg = MessageManager.get();
             ReflectionHelper reflect = new ReflectionHelper();
-            log.info("Reflect: " + reflect);
 
             Object minecraftServer = reflect.getMinecraftServer(server);
             if (minecraftServer == null) {
-                log.info("failed to get Minecraft server from Bukkit.getServer()");
+                msg.debug("Reflection: MC server not found");
                 return false;
             }
 
             Object serverConnection = reflect.serverConnectionFromMCServer(minecraftServer);
             if (serverConnection == null) {
-                log.info("failed to get ServerConnection from Minecraft Server");
+                msg.debug("Reflection: ServerConnection not found");
                 return false;
             }
 
             Object legacyPingHandler = reflect.newLegacyPingHandler(serverConnection);
             if (legacyPingHandler == null) {
-                log.info("legacyPingHandler is null");
+                msg.debug("Reflection: LegacyPingHandler unavailable");
                 return false;
             }
 
             Object packetSplitter = reflect.newPacketSplitter();
             if (packetSplitter == null) {
-                log.info("packetSplitter is null");
+                msg.debug("Reflection: PacketSplitter unavailable");
                 return false;
             }
 
             Object packetDecoder = reflect.newServerBoundPacketDecoder();
             if (packetDecoder == null) {
-                log.info("packetDecoder is null");
+                msg.debug("Reflection: PacketDecoder unavailable");
                 return false;
             }
 
             Object packetPrepender = reflect.newPacketPrepender();
             if (packetPrepender == null) {
-                log.info("packetPrepender is null");
+                msg.debug("Reflection: PacketPrepender unavailable");
                 return false;
             }
 
             Object packetEncoder = reflect.newClientBoundPacketEncoder();
             if (packetEncoder == null) {
-                log.info("packetEncoder is null");
+                msg.debug("Reflection: PacketEncoder unavailable");
                 return false;
             }
 
@@ -237,23 +237,23 @@ public class PlayitTcpTunnel {
             }
 
             if (networkManager == null) {
-                log.info("networkManager is null");
+                msg.debug("Reflection: NetworkManager unavailable");
                 return false;
             }
 
             Object handshakeListener = reflect.newHandshakeListener(minecraftServer, networkManager);
             if (handshakeListener == null) {
-                log.info("handshakeListener is null");
+                msg.debug("Reflection: HandshakeListener unavailable");
                 return false;
             }
 
             if (!reflect.networkManagerSetListener(networkManager, handshakeListener)) {
-                log.info("failed to set handshake listener on network manager");
+                msg.debug("Reflection: Failed to set listener");
                 return false;
             }
 
             if (!reflect.setRemoteAddress(tunnelChannel, trueIp)) {
-                log.warning("failed to set remote address to " + trueIp);
+                msg.debug("Could not set remote address for real IP");
             }
 
             var channel = tunnelChannel.pipeline().removeLast();
@@ -267,7 +267,7 @@ public class PlayitTcpTunnel {
                     .addLast("packet_handler", (ChannelHandler) networkManager);
 
             if (!reflect.addToServerConnections(serverConnection, networkManager)) {
-                log.info("failed to add to server connections");
+                msg.debug("Reflection: Failed to add to connections");
 
                 tunnelChannel.pipeline().remove("timeout");
                 tunnelChannel.pipeline().remove("legacy_query");
@@ -296,7 +296,7 @@ public class PlayitTcpTunnel {
         protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) throws Exception {
             tunnelChannel.writeAndFlush(msg).addListener(f -> {
                 if (!f.isSuccess()) {
-                    log.warning("failed to send data to tunnel");
+                    MessageManager.get().debug("Tunnel write failed");
                     minecraftChannel.disconnect();
                     tunnelChannel.disconnect();
                     return;

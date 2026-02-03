@@ -5,6 +5,7 @@ import gg.playit.api.actions.SignAgentRegister;
 import gg.playit.messages.ControlFeedReader;
 import gg.playit.messages.ControlRequestWriter;
 import gg.playit.messages.DecodeException;
+import gg.playit.minecraft.logger.MessageManager;
 import gg.playit.minecraft.utils.DecoderException;
 
 import java.io.IOException;
@@ -13,12 +14,9 @@ import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.logging.Logger;
 
 public class ChannelSetup {
     public static final int CONTROL_PORT = 5525;
-
-    static Logger log = Logger.getLogger(ChannelSetup.class.getName());
 
     public static FindSuitableChannel start() throws UnknownHostException {
         InetAddress[] allByName = InetAddress.getAllByName("control.playit.gg");
@@ -34,6 +32,7 @@ public class ChannelSetup {
         private InetAddress[] options;
 
         public SetupRequireAuthentication findChannel() throws IOException {
+            MessageManager msg = MessageManager.get();
             var socket = new DatagramSocket();
 
             /* 3 second timeout */
@@ -56,7 +55,7 @@ public class ChannelSetup {
                         socket.receive(rxPacket);
 
                         if (!Arrays.equals(rxPacket.getAddress().getAddress(), option.getAddress()) || rxPacket.getPort() != CONTROL_PORT) {
-                            log.warning("got response from unexpected source: " + rxPacket.getAddress() + ", port: " + rxPacket.getPort());
+                            msg.debug("Got response from unexpected source: " + rxPacket.getAddress());
                             continue;
                         }
 
@@ -71,16 +70,16 @@ public class ChannelSetup {
                                 next.address = option;
                                 return next;
                             } else {
-                                log.warning("expected pong response but got: " + message);
+                                msg.debug("Expected pong but got: " + message.getClass().getSimpleName());
                             }
                         } catch (DecodeException e) {
-                            log.warning("Failed to decode pong response: " + e.message);
+                            msg.debug("Failed to decode pong: " + e.message);
                         }
 
                     } catch (SocketTimeoutException ignore) {
-                        log.warning("timeout waiting for pong response");
+                        // Expected during retries, don't log
                     } catch (IOException error) {
-                        log.warning("Got IO error working with :" + option + ", error : " + error);
+                        msg.debug("IO error with " + option + ": " + error.getMessage());
                         break;
                     }
                 }
@@ -106,6 +105,8 @@ public class ChannelSetup {
         }
 
         public PlayitControlChannel authenticate(String secretKey) throws IOException {
+            MessageManager msg = MessageManager.get();
+            
             if (this.socket == null) {
                 throw new IOException("already used");
             }
@@ -155,7 +156,7 @@ public class ChannelSetup {
 
                         if (response instanceof ControlFeedReader.Error error) {
                             if (error == ControlFeedReader.Error.RequestQueued) {
-                                log.info("request queued, waiting 1 second before resend");
+                                msg.debug("Request queued, retrying in 1s...");
 
                                 try {
                                     Thread.sleep(1000);
@@ -165,15 +166,15 @@ public class ChannelSetup {
                                 continue;
                             }
 
-                            log.warning("got error from control feed: " + error);
+                            msg.debug("Control feed error: " + error);
                         }
 
                         break;
                     } catch (DecodeException | BufferUnderflowException error) {
-                        log.warning("failed to decode register response: " + error);
+                        msg.debug("Failed to decode register response");
                     }
                 } catch (SocketTimeoutException ignore) {
-                    log.warning("timeout waiting for register response");
+                    // Expected during retries
                 }
             }
 

@@ -3,6 +3,8 @@ package gg.playit.minecraft;
 import gg.playit.api.ApiClient;
 import gg.playit.api.ApiError;
 import gg.playit.api.models.Notice;
+import gg.playit.minecraft.logger.LogLevel;
+import gg.playit.minecraft.logger.MessageManager;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.bukkit.Bukkit;
@@ -22,13 +24,13 @@ import java.util.Map;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.logging.Logger;
 
 public final class PlayitBukkit extends JavaPlugin implements Listener {
     public static final String CFG_AGENT_SECRET_KEY = "agent-secret";
     public static final String CFG_CONNECTION_TIMEOUT_SECONDS = "mc-timeout-sec";
+    public static final String CFG_LOG_LEVEL = "log-level";
+    public static final String CFG_SHOW_BANNER = "show-banner";
 
-    static Logger log = Logger.getLogger(PlayitBukkit.class.getName());
     final EventLoopGroup eventGroup = new NioEventLoopGroup();
 
     private final Object managerSync = new Object();
@@ -42,6 +44,26 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         server = Bukkit.getServer();
+
+        // Initialize config with defaults
+        getConfig().addDefault(CFG_AGENT_SECRET_KEY, "");
+        getConfig().addDefault(CFG_CONNECTION_TIMEOUT_SECONDS, 30);
+        getConfig().addDefault(CFG_LOG_LEVEL, "INFO");
+        getConfig().addDefault(CFG_SHOW_BANNER, true);
+        getConfig().options().copyDefaults(true);
+        saveDefaultConfig();
+
+        // Initialize MessageManager
+        MessageManager.init(getLogger());
+        MessageManager msg = MessageManager.get();
+        
+        // Configure logging
+        String logLevelStr = getConfig().getString(CFG_LOG_LEVEL, "INFO");
+        msg.setLogLevel(LogLevel.fromString(logLevelStr));
+        msg.setShowBanner(getConfig().getBoolean(CFG_SHOW_BANNER, true));
+
+        // Show startup banner
+        msg.showStartupBanner();
 
         // Detect Geyser plugin
         PluginManager pm = Bukkit.getServer().getPluginManager();
@@ -71,9 +93,9 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
                     }
                 }
             } catch (Exception e) {
-                log.warning("Failed to read Geyser config: " + e.getMessage());
+                msg.debug("Failed to read Geyser config: " + e.getMessage());
             }
-            log.info("Geyser detected, Bedrock port: " + geyserPort);
+            msg.info("Geyser detected on port " + geyserPort);
         }
 
         var command = getCommand("playit");
@@ -81,18 +103,16 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
             command.setExecutor(this);
             command.setTabCompleter(this);
         } else {
-            log.severe("failed to setup command /playit");
+            msg.error("Failed to register /playit command");
         }
 
-        getConfig().addDefault("agent-secret", "");
-        saveDefaultConfig();
-
-        var secretKey = getConfig().getString("agent-secret");
+        var secretKey = getConfig().getString(CFG_AGENT_SECRET_KEY);
         resetConnection(secretKey);
 
         try {
             pm.registerEvents(this, this);
         } catch (Exception e) {
+            msg.debug("Failed to register events: " + e.getMessage());
         }
     }
 
@@ -101,31 +121,41 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
         var player = event.getPlayer();
         var manager = playitManager;
 
-        if (player.isOp()) {
+        if (player.isOp() && manager != null) {
             if (manager.isGuest()) {
-                player.sendMessage(ChatColor.RED + "WARNING:" + ChatColor.RESET + " playit.gg is running with a guest account");
+                player.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.RED + "Running with guest account - run /playit account guest-login-link to claim");
             } else if (!manager.emailVerified()) {
-                player.sendMessage(ChatColor.RED + "WARNING:" + ChatColor.RESET + " your email on playit.gg is not verified");
+                player.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.YELLOW + "Please verify your email on playit.gg");
             }
 
             Notice notice = manager.getNotice();
             if (notice != null) {
-                player.sendMessage(ChatColor.RED + "NOTICE:" + ChatColor.RESET + " " + notice.message);
-                player.sendMessage(ChatColor.RED + "URL:" + ChatColor.RESET + " " + notice.url);
+                player.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.WHITE + notice.message);
+                player.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.AQUA + notice.url);
             }
         }
     }
 
     public void broadcast(String message) {
-        Bukkit.broadcastMessage(ChatColor.BOLD + "" + ChatColor.UNDERLINE + "playit.gg:" + ChatColor.RESET + " " + message);
+        MessageManager.get().showSimpleMessage(message);
+    }
+
+    public void showTunnelAddress(String address) {
+        MessageManager.get().showStatusBox("Connected", address);
+    }
+
+    public void showClaimUrl(String claimCode) {
+        MessageManager.get().showClaimBox(claimCode);
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!sender.isOp()) {
-            sender.sendMessage("OP required");
+            sender.sendMessage(ChatColor.RED + "You need to be an operator to use this command.");
             return true;
         }
+
+        MessageManager msg = MessageManager.get();
 
         if (args.length > 0 && args[0].equals("agent")) {
             if (args.length > 1 && args[1].equals("status")) {
@@ -134,29 +164,40 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
                 if (manager == null) {
                     String currentSecret = getConfig().getString(CFG_AGENT_SECRET_KEY);
                     if (currentSecret == null || currentSecret.length() == 0) {
-                        sender.sendMessage(CFG_AGENT_SECRET_KEY + " is not set");
+                        sender.sendMessage(ChatColor.YELLOW + "Playit is not configured. Run /playit to see setup instructions.");
                     } else {
-                        sender.sendMessage("playit status: offline (or shutting down)");
+                        sender.sendMessage(ChatColor.YELLOW + "Status: " + ChatColor.RED + "Offline");
                     }
                 } else {
-                    String message = switch (manager.state()) {
-                        case PlayitKeysSetup.STATE_INIT -> "preparing secret";
-                        case PlayitKeysSetup.STATE_MISSING_SECRET -> "waiting for claim";
-                        case PlayitKeysSetup.STATE_CHECKING_SECRET -> "checking secret";
-                        case PlayitKeysSetup.STATE_CREATING_TUNNEL -> "preparing tunnel";
-                        case PlayitKeysSetup.STATE_ERROR -> "error setting up key / tunnel";
+                    String status = switch (manager.state()) {
+                        case PlayitKeysSetup.STATE_INIT -> "Initializing...";
+                        case PlayitKeysSetup.STATE_MISSING_SECRET -> "Waiting for claim";
+                        case PlayitKeysSetup.STATE_CHECKING_SECRET -> "Verifying secret";
+                        case PlayitKeysSetup.STATE_CREATING_TUNNEL -> "Creating tunnel";
+                        case PlayitKeysSetup.STATE_ERROR -> "Error";
 
-                        case PlayitManager.STATE_CONNECTING -> "connecting";
-                        case PlayitManager.STATE_ONLINE -> "connected";
-                        case PlayitManager.STATE_OFFLINE -> "offline";
-                        case PlayitManager.STATE_ERROR_WAITING -> "got error, retrying";
-                        case PlayitManager.STATE_INVALID_AUTH -> "invalid secret key";
+                        case PlayitManager.STATE_CONNECTING -> "Connecting...";
+                        case PlayitManager.STATE_ONLINE -> "Connected";
+                        case PlayitManager.STATE_OFFLINE -> "Offline";
+                        case PlayitManager.STATE_ERROR_WAITING -> "Reconnecting...";
+                        case PlayitManager.STATE_INVALID_AUTH -> "Invalid secret key";
 
-                        case PlayitManager.STATE_SHUTDOWN -> "shutdown";
-                        default -> "unknown";
+                        case PlayitManager.STATE_SHUTDOWN -> "Shutdown";
+                        default -> "Unknown";
                     };
 
-                    sender.sendMessage(ChatColor.BLUE + "" + ChatColor.UNDERLINE + "playit status:" + ChatColor.RESET + " " + message);
+                    ChatColor statusColor = switch (manager.state()) {
+                        case PlayitManager.STATE_ONLINE -> ChatColor.GREEN;
+                        case PlayitManager.STATE_CONNECTING, PlayitManager.STATE_ERROR_WAITING -> ChatColor.YELLOW;
+                        default -> ChatColor.RED;
+                    };
+
+                    sender.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.WHITE + "Status: " + statusColor + status);
+                    
+                    var address = manager.getAddress();
+                    if (address != null) {
+                        sender.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.WHITE + "Address: " + ChatColor.AQUA + address);
+                    }
                 }
 
                 return true;
@@ -164,13 +205,15 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
 
             if (args.length > 1 && args[1].equals("restart")) {
                 resetConnection(null);
-                broadcast("restarting connection as requested by: " + sender.getName());
+                sender.sendMessage(ChatColor.GREEN + "Restarting connection...");
                 return true;
             }
 
             if (args.length > 1 && args[1].equals("reset")) {
                 getConfig().set(CFG_AGENT_SECRET_KEY, "");
+                saveConfig();
                 resetConnection(null);
+                sender.sendMessage(ChatColor.GREEN + "Configuration reset. Visit the claim URL to reconfigure.");
                 return true;
             }
 
@@ -181,18 +224,18 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
                         playitManager = null;
                     }
                 }
-                broadcast("shutting down connection as requested by: " + sender.getName());
+                sender.sendMessage(ChatColor.YELLOW + "Playit connection shutdown.");
                 return true;
             }
 
             if (args.length > 2 && args[1].equals("set-secret")) {
                 String secretKey = args[2];
                 if (secretKey.length() < 32) {
-                    sender.sendMessage("invalid secret key");
+                    sender.sendMessage(ChatColor.RED + "Invalid secret key.");
                     return true;
                 }
                 resetConnection(secretKey);
-                sender.sendMessage("updated secret key, connecting to new tunnel server");
+                sender.sendMessage(ChatColor.GREEN + "Secret key updated, reconnecting...");
                 return true;
             }
 
@@ -201,37 +244,39 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
 
         if (args.length > 0 && args[0].equals("prop")) {
             if (args.length > 1 && args[1].equals("get")) {
-                {
-                    int current = 30;
-                    var p = playitManager;
-                    if (p != null) {
-                        current = playitManager.connectionTimeoutSeconds;
-                    }
-
-                    int settings = 30;
-                    try {
-                        settings = getConfig().getInt(CFG_CONNECTION_TIMEOUT_SECONDS);
-                    } catch (Exception ignore) {
-                    }
-
-                    sender.sendMessage("prop: " + CFG_CONNECTION_TIMEOUT_SECONDS + ", current: " + current + ", setting: " + settings);
+                int current = 30;
+                var p = playitManager;
+                if (p != null) {
+                    current = playitManager.connectionTimeoutSeconds;
                 }
 
+                int settings = getConfig().getInt(CFG_CONNECTION_TIMEOUT_SECONDS, 30);
+                sender.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.WHITE + CFG_CONNECTION_TIMEOUT_SECONDS + ": " + ChatColor.AQUA + settings + ChatColor.GRAY + " (active: " + current + ")");
+                
+                String logLevel = getConfig().getString(CFG_LOG_LEVEL, "INFO");
+                sender.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.WHITE + CFG_LOG_LEVEL + ": " + ChatColor.AQUA + logLevel);
                 return true;
             }
 
-            if (args.length > 2 && args[1].equals("set")) {
+            if (args.length > 3 && args[1].equals("set")) {
                 if (args[2].equals(CFG_CONNECTION_TIMEOUT_SECONDS)) {
                     try {
                         var value = Integer.parseInt(args[3]);
                         getConfig().set(CFG_CONNECTION_TIMEOUT_SECONDS, value);
                         saveConfig();
-
-                        sender.sendMessage("configuration set, run \"/playit agent restart\" to apply");
+                        sender.sendMessage(ChatColor.GREEN + "Set " + CFG_CONNECTION_TIMEOUT_SECONDS + " to " + value + ". Run /playit agent restart to apply.");
                     } catch (Exception ignore) {
-                        sender.sendMessage("invalid integer");
+                        sender.sendMessage(ChatColor.RED + "Invalid number.");
                     }
-
+                    return true;
+                }
+                
+                if (args[2].equals(CFG_LOG_LEVEL)) {
+                    LogLevel level = LogLevel.fromString(args[3]);
+                    getConfig().set(CFG_LOG_LEVEL, level.name());
+                    saveConfig();
+                    msg.setLogLevel(level);
+                    sender.sendMessage(ChatColor.GREEN + "Log level set to " + level.name());
                     return true;
                 }
             }
@@ -245,12 +290,11 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
                 if (m != null) {
                     var a = m.getAddress();
                     if (a != null) {
-                        broadcast(a);
+                        sender.sendMessage(ChatColor.GOLD + "[Playit] " + ChatColor.WHITE + "Tunnel: " + ChatColor.GREEN + a);
                         return true;
                     }
                 }
-
-                sender.sendMessage("playit.gg is still setting up");
+                sender.sendMessage(ChatColor.YELLOW + "Tunnel is still being set up...");
                 return true;
             }
         }
@@ -258,28 +302,31 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
         if (args.length > 0 && args[0].equals("account")) {
             if (args.length > 1 && args[1].equals("guest-login-link")) {
                 var secret = getConfig().getString(CFG_AGENT_SECRET_KEY);
-                if (secret == null) {
-                    sender.sendMessage("ERROR: secret not set");
+                if (secret == null || secret.isEmpty()) {
+                    sender.sendMessage(ChatColor.RED + "No secret key configured.");
                     return true;
                 }
 
-                sender.sendMessage("preparing login link");
+                sender.sendMessage(ChatColor.YELLOW + "Generating login link...");
 
                 new Thread(() -> {
                     try {
                         var api = new ApiClient(secret);
                         var session = api.createGuestWebSessionKey();
-
                         var url = "https://playit.gg/login/guest-account/" + session;
-                        log.info("generated login url: " + url);
-
-                        sender.sendMessage("generated login url");
-                        sender.sendMessage("URL: " + url);
+                        
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            sender.sendMessage(ChatColor.GREEN + "Login URL generated!");
+                            sender.sendMessage(ChatColor.AQUA + url);
+                        });
                     } catch (ApiError e) {
-                        log.warning("failed to create guest secret: " + e);
-                        sender.sendMessage("error: " + e.getMessage());
+                        Bukkit.getScheduler().runTask(this, () -> 
+                            sender.sendMessage(ChatColor.RED + "Error: " + e.getMessage())
+                        );
                     } catch (IOException e) {
-                        log.severe("failed to create guest secret: " + e);
+                        Bukkit.getScheduler().runTask(this, () -> 
+                            sender.sendMessage(ChatColor.RED + "Failed to generate link.")
+                        );
                     }
                 }).start();
 
@@ -287,7 +334,14 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
             }
         }
 
-        return false;
+        // Default: show help
+        sender.sendMessage(ChatColor.GOLD + "=== Playit.gg Commands ===");
+        sender.sendMessage(ChatColor.WHITE + "/playit agent status" + ChatColor.GRAY + " - View connection status");
+        sender.sendMessage(ChatColor.WHITE + "/playit agent restart" + ChatColor.GRAY + " - Restart connection");
+        sender.sendMessage(ChatColor.WHITE + "/playit agent reset" + ChatColor.GRAY + " - Reset configuration");
+        sender.sendMessage(ChatColor.WHITE + "/playit tunnel get-address" + ChatColor.GRAY + " - Get tunnel address");
+        sender.sendMessage(ChatColor.WHITE + "/playit account guest-login-link" + ChatColor.GRAY + " - Get account claim URL");
+        return true;
     }
 
     private void resetConnection(String secretKey) {
@@ -350,8 +404,11 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
                 if (!args[1].equals("set") && !args[1].equals("get")) {
                     return null;
                 }
-
-                return List.of(CFG_CONNECTION_TIMEOUT_SECONDS);
+                return List.of(CFG_CONNECTION_TIMEOUT_SECONDS, CFG_LOG_LEVEL);
+            }
+            
+            if (argCount == 3 && args[1].equals("set") && args[2].equals(CFG_LOG_LEVEL)) {
+                return List.of("DEBUG", "INFO", "WARN", "ERROR");
             }
         }
 
@@ -370,5 +427,6 @@ public final class PlayitBukkit extends JavaPlugin implements Listener {
             playitManager.shutdown();
             playitManager = null;
         }
+        MessageManager.get().info("Plugin disabled");
     }
 }

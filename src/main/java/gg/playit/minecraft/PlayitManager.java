@@ -4,17 +4,15 @@ import gg.playit.api.ApiClient;
 import gg.playit.api.models.Notice;
 import gg.playit.control.PlayitControlChannel;
 import gg.playit.messages.ControlFeedReader;
+import gg.playit.minecraft.logger.MessageManager;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Logger;
 
 public class PlayitManager implements Runnable {
-    static Logger log = Logger.getLogger(PlayitManager.class.getName());
     private final AtomicInteger state = new AtomicInteger(STATE_INIT);
     private final PlayitConnectionTracker tracker = new PlayitConnectionTracker();
 
@@ -80,6 +78,8 @@ public class PlayitManager implements Runnable {
 
     @Override
     public void run() {
+        MessageManager msg = MessageManager.get();
+        
         /* make sure we don't run two instances */
         if (!state.compareAndSet(STATE_INIT, PlayitKeysSetup.STATE_INIT)) {
             return;
@@ -90,11 +90,11 @@ public class PlayitManager implements Runnable {
                 keys = setup.progress();
 
                 if (keys != null) {
-                    log.info("keys and tunnel setup");
+                    msg.debug("Keys and tunnel setup complete");
                     break;
                 }
             } catch (IOException e) {
-                log.severe("got error during setup: " + e);
+                msg.error("Setup error", e);
 
                 try {
                     Thread.sleep(3000);
@@ -107,11 +107,13 @@ public class PlayitManager implements Runnable {
             if (state.get() == PlayitKeysSetup.STATE_MISSING_SECRET) {
                 var code = setup.getClaimCode();
                 if (code != null) {
+                    // Show claim box in console
+                    plugin.showClaimUrl(code);
+                    
+                    // Notify online ops
                     for (var player : plugin.server.getOnlinePlayers()) {
                         if (player.isOp()) {
-                            player.sendMessage("Visit " + ChatColor.RED + "https://playit.gg/mc/" + code + ChatColor.RESET + " to setup playit");
-                        } else {
-                            player.sendMessage("Check server logs to get playit.gg claim link to setup tunnel (or be a Server Operator)");
+                            player.sendMessage("§6[Playit] §eVisit §bhttps://playit.gg/mc/" + code + " §eto setup");
                         }
                     }
                 }
@@ -124,7 +126,7 @@ public class PlayitManager implements Runnable {
         }
 
         if (keys == null) {
-            log.info("shutdown reached, tunnel connection never started");
+            msg.debug("Shutdown before tunnel connection started");
             return;
         }
 
@@ -132,15 +134,14 @@ public class PlayitManager implements Runnable {
         plugin.saveConfig();
 
         if (keys.isGuest) {
-            plugin.broadcast(ChatColor.RED + "WARNING: " + ChatColor.RESET + " plugin is running with a guest account");
-            plugin.broadcast("see server console for setup URL");
+            msg.showWarningBox("Guest Account", "Running with a guest account. Use /playit account guest-login-link to claim.");
 
             var api = new ApiClient(keys.secretKey);
 
             try {
                 var key = api.createGuestWebSessionKey();
                 var url = "https://playit.gg/login/guest-account/" + key;
-                log.info("setup playit.gg account: " + url);
+                msg.showSuccessBox("Guest Account Login", "Claim your account:", url);
 
                 if (state.get() == STATE_SHUTDOWN) {
                     return;
@@ -148,19 +149,18 @@ public class PlayitManager implements Runnable {
 
                 for (var player : plugin.server.getOnlinePlayers()) {
                     if (player.isOp()) {
-                        player.sendMessage("setup playit.gg account");
-                        player.sendMessage(ChatColor.RED + "URL: " + ChatColor.RESET + url);
+                        player.sendMessage("§6[Playit] §eClaim your account: §b" + url);
                     }
                 }
             } catch (IOException e) {
-                log.severe("failed to generate web session key: " + e);
+                msg.error("Failed to generate web session key", e);
             }
         } else if (!keys.isEmailVerified) {
-            plugin.broadcast(ChatColor.RED + "WARNING: " + ChatColor.RESET + "email associated with playit.gg account is not verified");
+            msg.warn("Email not verified on playit.gg account");
         }
 
-        plugin.broadcast("tunnel setup");
-        plugin.broadcast(keys.tunnelAddress);
+        // Show the tunnel address
+        plugin.showTunnelAddress(keys.tunnelAddress);
 
         if (state.get() == STATE_SHUTDOWN) {
             return;
@@ -168,9 +168,14 @@ public class PlayitManager implements Runnable {
 
         state.set(STATE_CONNECTING);
 
+        int reconnectAttempts = 0;
+        long lastReconnect = 0;
+
         while (state.get() == STATE_CONNECTING) {
             try (PlayitControlChannel channel = PlayitControlChannel.setup(keys.secretKey)) {
                 state.compareAndSet(STATE_CONNECTING, STATE_ONLINE);
+                reconnectAttempts = 0;
+                msg.showSimpleMessage("§aTunnel connection established");
 
                 while (state.get() == STATE_ONLINE) {
                     var messageOpt = channel.update();
@@ -178,11 +183,11 @@ public class PlayitManager implements Runnable {
                         var feedMessage = messageOpt.get();
 
                         if (feedMessage instanceof ControlFeedReader.NewClient newClient) {
-                            log.info("got new client: " + feedMessage);
+                            msg.debug("New client connection from " + newClient.peerAddr);
 
                             var key = newClient.peerAddr + "-" + newClient.connectAddr;
                             if (tracker.addConnection(key)) {
-                                log.info("starting tcp tunnel for client");
+                                msg.debug("Starting TCP tunnel for client");
 
                                 new PlayitTcpTunnel(
                                         new InetSocketAddress(InetAddress.getByAddress(newClient.peerAddr.ipBytes), Short.toUnsignedInt(newClient.peerAddr.portNumber)),
@@ -201,29 +206,42 @@ public class PlayitManager implements Runnable {
                 }
             } catch (IOException e) {
                 state.compareAndSet(STATE_ONLINE, STATE_ERROR_WAITING);
-                log.severe("failed when communicating with tunnel server, error: " + e);
-
+                
                 if (e.getMessage().contains("invalid authentication")) {
+                    msg.error("Invalid secret key - please reconfigure");
                     state.set(STATE_INVALID_AUTH);
+                    break;
+                }
+
+                // Rate limit reconnection attempts
+                reconnectAttempts++;
+                long now = System.currentTimeMillis();
+                long timeSinceLastReconnect = now - lastReconnect;
+                
+                int delay = Math.min(5000 * reconnectAttempts, 60000); // Max 1 minute
+                if (timeSinceLastReconnect < delay) {
+                    delay = (int)(delay - timeSinceLastReconnect);
+                }
+                
+                if (reconnectAttempts <= 3) {
+                    msg.debug("Connection lost, reconnecting in " + (delay/1000) + "s...");
+                } else if (reconnectAttempts == 4) {
+                    msg.warn("Connection unstable, will keep trying...");
                 }
 
                 try {
-                    Thread.sleep(5_000);
+                    Thread.sleep(delay);
                 } catch (InterruptedException ignore) {
                 }
+                
+                lastReconnect = System.currentTimeMillis();
             } finally {
                 if (state.compareAndSet(STATE_SHUTDOWN, STATE_OFFLINE)) {
-                    log.info("control channel shutdown");
+                    msg.debug("Control channel shutdown");
                 } else if (state.compareAndSet(STATE_ERROR_WAITING, STATE_CONNECTING)) {
-                    log.info("trying to connect again");
+                    msg.debug("Attempting reconnection...");
                 } else if (state.compareAndSet(STATE_ONLINE, STATE_CONNECTING)) {
-                    log.warning("unexpected state ONLINE, moving to CONNECTING");
-                }
-                if (state.get() == STATE_CONNECTING) {
-                    log.info("failed to connect, retrying");
-                }
-                if (state.get() == STATE_INVALID_AUTH) {
-                    log.info("invalid auth, done trying");
+                    msg.debug("Unexpected disconnect, reconnecting...");
                 }
             }
         }

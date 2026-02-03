@@ -1,2 +1,17 @@
-mc-timeout-sec: 30
+# Playit.gg Plugin Configuration
+
+# Secret key from playit.gg (auto-filled after claiming)
 agent-secret: ""
+
+# Connection timeout in seconds
+mc-timeout-sec: 30
+
+# Logging level: DEBUG, INFO, WARN, ERROR
+# DEBUG = Show all messages (for troubleshooting)
+# INFO  = Show important messages (default)
+# WARN  = Show warnings and errors only
+# ERROR = Show errors only
+log-level: INFO
+
+# Show ASCII banner on startup
+show-banner: true

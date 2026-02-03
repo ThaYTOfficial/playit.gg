@@ -1,20 +1,24 @@
 package gg.playit.minecraft;
 
-import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Thread-safe tracker for active connections.
+ * Uses ConcurrentHashMap for lock-free operations.
+ */
 public class PlayitConnectionTracker {
-    private final Object sync = new Object();
-    private final HashSet<String> activeConnections = new HashSet<>();
+    private final Set<String> activeConnections = ConcurrentHashMap.newKeySet();
 
     public boolean addConnection(String key) {
-        synchronized (sync) {
-            return activeConnections.add(key);
-        }
+        return activeConnections.add(key);
     }
 
     public void removeConnection(String key) {
-        synchronized (sync) {
-            activeConnections.remove(key);
-        }
+        activeConnections.remove(key);
+    }
+    
+    public int getActiveCount() {
+        return activeConnections.size();
     }
 }

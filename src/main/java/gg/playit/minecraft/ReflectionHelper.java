@@ -1,5 +1,6 @@
 package gg.playit.minecraft;
 
+import gg.playit.minecraft.logger.MessageManager;
 import io.netty.channel.AbstractChannel;
 import io.netty.channel.Channel;
 import org.bukkit.Server;
@@ -9,11 +10,8 @@ import java.net.SocketAddress;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.logging.Logger;
 
 public class ReflectionHelper {
-    static Logger log = Logger.getLogger(ReflectionHelper.class.getName());
-
     private final Class<?> ServerConnection;
     private final Class<?> LegacyPingHandler;
     private final Class<?> MinecraftServer;
@@ -78,7 +76,7 @@ public class ReflectionHelper {
             method.invoke(networkManager, listener);
             return true;
         } catch (Exception e) {
-            log.warning("failed to call setListener: " + e);
+            MessageManager.get().debug("Reflection: setListener method failed");
         }
 
         try {
@@ -87,7 +85,7 @@ public class ReflectionHelper {
             field.set(networkManager, listener);
             return true;
         } catch (Exception e) {
-            log.warning("failed to set packetListener" + e);
+            MessageManager.get().debug("Reflection: packetListener field failed");
         }
 
         var options = searchForFieldByType(NetworkManager, PacketListener);
@@ -97,10 +95,10 @@ public class ReflectionHelper {
                 options.get(0).set(networkManager, listener);
                 return true;
             } catch (Exception e) {
-                log.warning("failed to set packetListener directly to type" + options.get(0) + ", error: " + e);
+                MessageManager.get().debug("Reflection: type-based listener failed");
             }
-        } else {
-            log.warning("got multiple options for packet listener field: " + options);
+        } else if (options.size() > 1) {
+            MessageManager.get().debug("Reflection: multiple packet listener fields found");
         }
 
         return false;
@@ -120,7 +118,7 @@ public class ReflectionHelper {
 
             return true;
         } catch (Exception e) {
-            log.warning("failed set field connections, error: " + e);
+            MessageManager.get().debug("Reflection: connections field failed");
         }
 
         HashSet<Object> potentialFieldObjects = new HashSet<>();
@@ -153,10 +151,10 @@ public class ReflectionHelper {
                 list.add(networkManager);
                 return true;
             } catch (Exception e) {
-                log.warning("failed to add connection to " + found + ", error: " + e);
+                MessageManager.get().debug("Reflection: list add failed");
             }
-        } else {
-            log.warning("multiple connection lists: " + potentialFieldObjects);
+        } else if (potentialFieldObjects.size() > 1) {
+            MessageManager.get().debug("Reflection: multiple connection lists");
         }
 
         return false;
@@ -181,7 +179,7 @@ public class ReflectionHelper {
             field.set(channel, address);
             return true;
         } catch (Exception error) {
-            log.warning("failed to set remoteAddress, error: " + error);
+            MessageManager.get().debug("Reflection: remoteAddress failed");
             return false;
         }
     }
