@@ -1,32 +1,24 @@
-<p align="center">
-  <img src="https://playit.gg/static/playit-logo.svg" alt="Playit.gg" width="200"/>
-</p>
+# Playit.gg Revamp
 
-<h1 align="center">Playit.GG Revamped</h1>
+This is a recoded fork of the Minecraft Java Plugin for https://playit.gg. Download the official version [here](https://github.com/playit-cloud/playit-minecraft-plugin/releases/latest/download/playit-minecraft-plugin.jar).
 
-<p align="center">
-  <strong>A complete overhaul of the Playit.gg Minecraft plugin</strong><br/>
-  <em>Make your server public without port forwarding</em>
-</p>
+Not sure how to use the playit plugin? Watch their [YouTube video](https://youtu.be/QQYRdgBL-4o).
 
-<p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.0-blue?style=flat-square" alt="Version"/>
-  <img src="https://img.shields.io/badge/Minecraft-1.13--1.21+-green?style=flat-square" alt="Minecraft"/>
-  <img src="https://img.shields.io/badge/Folia-Supported-purple?style=flat-square" alt="Folia"/>
-</p>
+## Compatibility
 
----
+❌ = not planned
+🚧 = planned
+✔️ = implemented
 
-## 🆕 What's New in v2.0
-
-This is a **major update** from v1.5, completely rewritten for better performance and user experience:
-
-- ✨ **New logging system** - Configurable log levels, no more console spam
-- 🎨 **Beautiful console UI** - Clean formatted messages instead of raw logs  
-- ⚡ **Performance optimized** - Lock-free connection tracking, rate-limited reconnects
-- 🔧 **Folia support** - Works with all modern server types
-- 🛠️ **Better error handling** - Graceful recovery from API errors
-- 📝 **Improved commands** - Cleaner `/playit` help and status
+### Server Types
+| Server Type  | Playit works | Real IP works | Plugin Download                                                                                                                         |
+|--------------| ------------ |---------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| [Spigot 1.21](https://getbukkit.org/download/spigot)  | ✔️ | ✔️ | [0.1.4](https://github.com/playit-cloud/playit-minecraft-plugin/releases/download/v0.1.4/playit-minecraft-plugin.jar) |
+| [Spigot 1.16.5](https://getbukkit.org/download/spigot) | ✔️ | ✔️ | [0.1.4-mc1.16](https://github.com/playit-cloud/playit-minecraft-plugin/releases/download/v0.1.4/playit-minecraft-plugin-1.16.jar) |
+| [Paper 1.19](https://papermc.io/)   | ✔️ | ✔️ | [0.1.4](https://github.com/playit-cloud/playit-minecraft-plugin/releases/download/v0.1.4/playit-minecraft-plugin.jar) |
+| [Paper 1.8 - 1.18](https://papermc.io/legacy) | ✔️ | ❌ | [0.1.4](https://github.com/playit-cloud/playit-minecraft-plugin/releases/download/v0.1.4/playit-minecraft-plugin.jar) & [0.1.4-mc1.16](https://github.com/playit-cloud/playit-minecraft-plugin/releases/download/v0.1.4/playit-minecraft-plugin-1.16.jar)|
+| [Magma 1.18](https://magmafoundation.org/) | ✔️ | ❌ | [0.1.4](https://github.com/playit-cloud/playit-minecraft-plugin/releases/download/v0.1.4/playit-minecraft-plugin.jar)
+| [BungeeCord](https://www.spigotmc.org/wiki/bungeecord/) | ✔️ |   |
 
 ---
 
@@ -111,11 +103,6 @@ Yes! Playit.gg is free for personal use.
 - 🌐 [Playit.gg Website](https://playit.gg)
 - 📖 [Documentation](https://playit.gg/docs)
 - 💬 [Discord Community](https://discord.gg/playit)
-
-## ❤️ Credits
-
-- **[Playit.gg Team](https://playit.gg)** - For the original plugin and the amazing tunneling platform.
-- **[itasli](https://github.com/itasli)** - For the "Revamped" v2.0 overhaul and maintenance.
 
 ---
 
